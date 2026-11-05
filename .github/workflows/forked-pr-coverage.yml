@@ -16,9 +16,6 @@ jobs:
     permissions:
       pull-requests: write
       contents: read
-      # NOTE: added only because this PoC repository is private; the real target
-      # is a public repository where artifact download works with contents:read.
-      actions: read
 
     steps:
       - name: Checkout repo
